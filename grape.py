@@ -17,6 +17,22 @@ display = None
 def _reverse_bits_of_byte(b):
     return (((b * 0x0802L & 0x22110L) |(b * 0x8020L & 0x88440L)) * 0x10101L >> 16) & 0xff
 
+class ButtonHandler(object):
+    def on_pressed(self, display):
+        pass
+    def on_left(self, display):
+        pass
+    def on_right(self, display):
+        pass
+
+class ButtonPrinter(ButtonHandler):
+    def on_pressed(self, display):
+        print("pressed")
+    def on_left(self, display):
+        print("left")
+    def on_right(self, display):
+        print("right")
+
 class Stack(object):
 
     def __init__(self, bus, prefix):
@@ -157,6 +173,8 @@ class PowerMeter(I2CDevice):
 
 class Display(I2CDevice):
     CLASS_ADDRESS = 0x20
+    DEFAULT_PREFIX = 0x07
+
     RED = 0x01
     GREEN = 0x02
 
@@ -168,15 +186,15 @@ class Display(I2CDevice):
     def setup(self):
         # Interupt
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(INTERUPT_PIN, IN)
-        #PCA init
-        self._dev_write(0x04, [0x00])
-        self._dev_write(0x05, [0x00])
-        self._dev_write(0x06, [0x00])
-        self._dev_write(0x07, [0x1C])
-        #LCD init
+        GPIO.setup(INTERUPT_PIN, GPIO.IN)
+        # PCA init
+        self.write_word(0x04, 0x00)
+        self.write_word(0x05, 0x00)
+        self.write_word(0x06, 0x00)
+        self.write_word(0x07, 0x1C)
+        # LCD init
         sleep(0.015)
-        self.__dev_write(0x03, self._dev_read(0x03) & 0x1F)
+        self.write_word(0x03, self.read_word(0x03) & 0x1F)
         self._cmd(0x30)
         self._cmd(0x30)
         self._cmd(0x30)
@@ -239,8 +257,9 @@ for bus_id in BUSES:
 
 for bid, bus in buses.items():
     _log.debug("Probing display on bus %d.", bid)
-    if Display.probe(bus, 0x07):
-        display = Display(bus, 0x07)
+    if Display.probe(bus, Display.DEFAULT_PREFIX):
+        display = Display(bus, Display.DEFAULT_PREFIX)
+        display.setup()
         _log.info("Display found on bus %d.", bid)
     else:
         _log.debug("Display on bus %d not found.", bid)
