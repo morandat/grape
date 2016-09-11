@@ -173,7 +173,7 @@ class PowerMeter(I2CDevice):
 
 class Display(I2CDevice):
     CLASS_ADDRESS = 0x20
-    DEFAULT_PREFIX = 0x07
+    DEFAULT_PREFIX = 0x00
 
     RED = 0x01
     GREEN = 0x02
@@ -183,15 +183,14 @@ class Display(I2CDevice):
     DELAY=0.004
     SHORT_DELAY=0.001
 
+
     def setup(self):
-        # Interupt
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(INTERUPT_PIN, GPIO.IN)
         # PCA init
         self.write_word(0x04, 0x00)
         self.write_word(0x05, 0x00)
         self.write_word(0x06, 0x00)
         self.write_word(0x07, 0x1C)
+
         # LCD init
         sleep(0.015)
         self.write_word(0x03, self.read_word(0x03) & 0x1F)
@@ -202,6 +201,14 @@ class Display(I2CDevice):
         self._cmd(0x0C)
         self._cmd(0x01)
         self._cmd(0x07)
+
+        # Interupt
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(INTERUPT_PIN, GPIO.IN)
+        GPIO.add_event_detect(INTERUPT_PIN, GPIO.RISING, callback = self.interrupt)
+
+        self.btn_handler = ButtonHandler()
+        self._status = 0 # FIXME Should be readed
 
     def led(self, index, state):
         status = self._read()
@@ -219,30 +226,37 @@ class Display(I2CDevice):
     def display_shift(self):
         self._cmd(0x1F)
 
-    def print_char(self, msg):
+    def print_str(self, msg):
         for c in msg:
             self.print_char(ord(c))
 
     def print_char(self, char):
+        status = self._read()
         self.write_word(0x03, status | 0x80)
         self.write_word(0x02, _reverse_bits_of_byte(instr))
         self.write_word(0x03, status & ~0x80)
 
+    def interrupt(self, channel):
+        p_state = self._status
+        self._status = self.read_status()
+        self.btn_handler.pressed() # FIXME send the right event
+
     def _cmd(self, instr):
         self.write_word(0x02, _reverse_bits_of_byte(instr))
-        sleep(DELAY)
-        __lcd_enable()
-        sleep(DELAY)
+        sleep(self.DELAY)
+        self.__lcd_enable()
+        sleep(self.DELAY)
     def __lcd_enable(self):
+        status = self._read()
         self.write_word(0x03, status | 0x20)
-        sleep(SHORT_DELAY)
+        sleep(self.SHORT_DELAY)
         self.write_word(0x03, status & ~0x20)
     def _read(self):
-        return self.read_word(EXP_REG)
+        return self.read_word(self.EXP_REG)
     def _write(self, value):
-        self.write_word(EXP_REG, value)
+        self.write_word(self.EXP_REG, value)
     def _status(self):
-        return self._dev_read(0x01) & 0x1C
+        return self.read_word(0x01) & 0x1C
 
 STACK_DEVICES = [PowerSwitch, Temperature, PowerMeter]
 
