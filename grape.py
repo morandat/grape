@@ -52,6 +52,7 @@ class Stack(object):
 
 class I2CDevice(object):
     CLASS_ADDRESS = 0x00 # Should be defined in each subclass
+    PROBE_QUICK = False
 
     def __init__(self, bus, prefix):
         self._bus = bus
@@ -80,7 +81,10 @@ class I2CDevice(object):
     def probe(cls, bus, prefix):
         address = cls.make_address(prefix)
         try:
-            bus.read_byte(address)
+            if cls.PROBE_QUICK:
+                bus.write_quick(address)
+            else:
+                bus.read_byte(address)
             return True
         except:
             return False
@@ -175,8 +179,8 @@ class Display(I2CDevice):
     CLASS_ADDRESS = 0x20
     DEFAULT_PREFIX = 0x00
 
-    RED = 0x01
-    GREEN = 0x02
+    RED = 0x08
+    GREEN = 0x10
 
     EXP_REG = 0x03
 
@@ -189,18 +193,17 @@ class Display(I2CDevice):
         self.write_word(0x04, 0x00)
         self.write_word(0x05, 0x00)
         self.write_word(0x06, 0x00)
-        self.write_word(0x07, 0x1C)
-
+        self.write_word(0x07, 0xE0)
         # LCD init
         sleep(0.015)
-        self.write_word(0x03, self.read_word(0x03) & 0x1F)
+        self._write_state(self._read_state() & 0xF8)
         self._cmd(0x30)
         self._cmd(0x30)
         self._cmd(0x30)
         self._cmd(0x38)
-        self._cmd(0x0C)
-        self._cmd(0x01)
-        self._cmd(0x07)
+        self._cmd(0x0E)
+        self.clear()
+        self._cmd(0x06)
 
         # Interupt
         GPIO.setmode(GPIO.BCM)
@@ -211,11 +214,11 @@ class Display(I2CDevice):
         self._status = 0 # FIXME Should be readed
 
     def led(self, index, state):
-        status = self._read()
+        status = self._read_state()
         if state:
-            self.write_word(0x03, status | 1 << index)
+            self._write_state(status &~ index)
         else:
-            self.write_word(0x03, status & ~(1 << index))
+            self._write_state(status | index)
 
     def cursor_home(self):
         self._cmd(0x02)
@@ -226,37 +229,44 @@ class Display(I2CDevice):
     def display_shift(self):
         self._cmd(0x1F)
 
+    def status(self):
+        return self.read_word(0x01) & 0x1C
+
     def print_str(self, msg):
         for c in msg:
             self.print_char(ord(c))
 
     def print_char(self, char):
-        status = self._read()
-        self.write_word(0x03, status | 0x80)
-        self.write_word(0x02, _reverse_bits_of_byte(instr))
-        self.write_word(0x03, status & ~0x80)
+        status = self._read_state()
+        self._write_state(status | 0x04)
+        self.write_word(0x02, _reverse_bits_of_byte(char))
+        self._lcd_enable()
+        self._write_state(status &~ 0x04)
 
     def interrupt(self, channel):
         p_state = self._status
         self._status = self.read_status()
-        self.btn_handler.pressed() # FIXME send the right event
+        if self.btn_handler:
+            self.btn_handler.pressed() # FIXME send the right event
 
     def _cmd(self, instr):
         self.write_word(0x02, _reverse_bits_of_byte(instr))
         sleep(self.DELAY)
-        self.__lcd_enable()
+        self._lcd_enable()
         sleep(self.DELAY)
-    def __lcd_enable(self):
-        status = self._read()
-        self.write_word(0x03, status | 0x20)
+    def _lcd_enable(self):
+        status = self._read_state()
+        self._write_state(status | 0x01)
         sleep(self.SHORT_DELAY)
-        self.write_word(0x03, status & ~0x20)
-    def _read(self):
-        return self.read_word(self.EXP_REG)
-    def _write(self, value):
-        self.write_word(self.EXP_REG, value)
-    def _status(self):
-        return self.read_word(0x01) & 0x1C
+        self._write_state(status & ~0x01)
+    def _reset(self):
+        self.write_word(0x03, 0x03)
+    def _read_state(self):
+        return self.read_word(0x03)
+    def _write_state(self, value):
+        self.write_word(0x03, value)
+    def _config_rw(self):
+        self.write_word(0x03, 0x02)
 
 STACK_DEVICES = [PowerSwitch, Temperature, PowerMeter]
 
