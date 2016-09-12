@@ -28,10 +28,16 @@ for i in range(5):
 
 display.print_str("Hello grape ...")
 
+#GPIO.setup(4, GPIO.IN)
+#GPIO.setup(14, GPIO.IN)
 while True:
-    sleep(.3)
-    print(display._read_state())
+    sleep(.01)
+    display.interrupt(INTERUPT_PIN)
+    #if GPIO.input(4):
+        #print("OK")
+    #if GPIO.input(14):
+        #print("OK")
     #if GPIO.input(15):
-    #    print("OK")
+        #print("OK")
 
 display.print_str("Hello grape ...")

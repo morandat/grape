@@ -178,15 +178,18 @@ class PowerMeter(I2CDevice):
 class Display(I2CDevice):
     CLASS_ADDRESS = 0x20
     DEFAULT_PREFIX = 0x00
+    PROBE_QUICK = True
 
     RED = 0x08
     GREEN = 0x10
 
-    EXP_REG = 0x03
+    DELAY = 0.004
+    SHORT_DELAY = 0.001
 
-    DELAY=0.004
-    SHORT_DELAY=0.001
-
+    BTN_PRESS = 0x20
+    BTN_LEFT_RIGHT = 0x40 | 0x80
+    BUTTONS = BTN_PRESS | BTN_LEFT_RIGHT
+    _LEFT_SUCCESSOR = [1, 3, 0, 2]
 
     def setup(self):
         # PCA init
@@ -194,71 +197,82 @@ class Display(I2CDevice):
         self.write_word(0x05, 0x00)
         self.write_word(0x06, 0x00)
         self.write_word(0x07, 0xE0)
+
         # LCD init
         sleep(0.015)
         self._write_state(self._read_state() & 0xF8)
-        self._cmd(0x30)
-        self._cmd(0x30)
-        self._cmd(0x30)
-        self._cmd(0x38)
-        self._cmd(0x0E)
-        self.clear()
-        self._cmd(0x06)
+        self._lcd(0x30)
+        self._lcd(0x30)
+        self._lcd(0x30)
+        self._lcd(0x38)
+        self._lcd(0x0E)
+        self.clear_screen()
+        self._lcd(0x06)
 
         # Interupt
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(INTERUPT_PIN, GPIO.IN)
-        GPIO.add_event_detect(INTERUPT_PIN, GPIO.RISING, callback = self.interrupt)
+        #GPIO.add_event_detect(INTERUPT_PIN, GPIO.RISING, callback = self.interrupt)
 
         self.btn_handler = ButtonHandler()
-        self._status = 0 # FIXME Should be readed
+        self._status = self.btn_status()
 
     def led(self, index, state):
-        status = self._read_state()
+        state = self._read_state()
         if state:
-            self._write_state(status &~ index)
+            self._write_state(state &~ index)
         else:
-            self._write_state(status | index)
+            self._write_state(state | index)
 
     def cursor_home(self):
-        self._cmd(0x02)
+        self._lcd(0x02)
 
-    def clear(self):
-        self._cmd(0x01)
+    def clear_screen(self):
+        self._lcd(0x01)
 
     def display_shift(self):
-        self._cmd(0x1F)
+        self._lcd(0x1F)
 
-    def status(self):
+    def lcd_status(self):
         return self.read_word(0x01) & 0x1C
+
+    def btn_status(self):
+        return self.read_word(0x01) & self.BUTTONS
 
     def print_str(self, msg):
         for c in msg:
             self.print_char(ord(c))
 
     def print_char(self, char):
-        status = self._read_state()
-        self._write_state(status | 0x04)
+        state = self._read_state()
+        self._write_state(state | 0x04)
         self.write_word(0x02, _reverse_bits_of_byte(char))
         self._lcd_enable()
-        self._write_state(status &~ 0x04)
+        self._write_state(state &~ 0x04)
 
     def interrupt(self, channel):
         p_state = self._status
-        self._status = self.read_status()
-        if self.btn_handler:
-            self.btn_handler.pressed() # FIXME send the right event
+        state = self._status = self.btn_status()
+        if self.btn_handler is None: return
+        if state & self.BTN_PRESS: self.btn_handler.on_pressed(self)
+        state = (state & self.BTN_LEFT_RIGHT) >> 6 # FIXME function or constant for this 
+        p_state = (p_state & self.BTN_LEFT_RIGHT) >> 6
+        if state != p_state:
+            if self._LEFT_SUCCESSOR[p_state] == state:
+                self.btn_handler.on_left(self)
+            else:
+                self.btn_handler.on_right(self)
 
-    def _cmd(self, instr):
+    def _lcd(self, instr):
         self.write_word(0x02, _reverse_bits_of_byte(instr))
         sleep(self.DELAY)
         self._lcd_enable()
         sleep(self.DELAY)
     def _lcd_enable(self):
-        status = self._read_state()
-        self._write_state(status | 0x01)
+        state = self._read_state()
+        self._write_state(state | 0x01)
         sleep(self.SHORT_DELAY)
-        self._write_state(status & ~0x01)
+        self._write_state(state & ~0x01)
     def _reset(self):
         self.write_word(0x03, 0x03)
     def _read_state(self):
