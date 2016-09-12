@@ -64,10 +64,10 @@ class I2CDevice(object):
     def setup(self):
         pass
 
-    def read_byte(self):
-        return self._bus.read_byte(self._address)
-    def write_byte(self, value):
-        self._bus.write_byte(self._address, value)
+    def read_byte(self, register = 0x00):
+        return self._bus.read_byte_data(self._address, register)
+    def write_byte(self, register, value):
+        self._bus.write_byte_data(self._address, register, value)
     def read_word(self, register):
         return self._bus.read_word_data(self._address, register)
     def write_word(self, register, value):
@@ -98,7 +98,7 @@ class PowerSwitch(I2CDevice):
     def update(self):
         self._pin = self.read_byte()
     def write(self):
-        self.write_byte(self._pin)
+        self.write_byte(0x00, self._pin)
     def status(self):
         s = []
         for i in range(len(self.L2P)):
@@ -191,23 +191,33 @@ class Display(I2CDevice):
     BUTTONS = BTN_PRESS | BTN_LEFT_RIGHT
     _LEFT_SUCCESSOR = [1, 3, 0, 2]
 
+    CFG_DISPLAY = 0x08
+    DISPLAY = 0x04
+    CURSOR = 0x02
+    BLINK = 0x01
+
+    SCROLL_RIGHT = 0x02
+    SCROLL_DISPLAY = 0x01
+
     def setup(self):
         # PCA init
-        self.write_word(0x04, 0x00)
-        self.write_word(0x05, 0x00)
-        self.write_word(0x06, 0x00)
-        self.write_word(0x07, 0xE0)
+        self.write_byte(0x04, 0x00)
+        self.write_byte(0x05, 0x00)
+        self.write_byte(0x06, 0x00)
+        self.write_byte(0x07, 0xE0)
 
         # LCD init
         sleep(0.015)
+        # Ensure that buttons are output are all zeros
         self._write_state(self._read_state() & 0xF8)
+        # Init proc : send 3 x 0x30
         self._lcd(0x30)
         self._lcd(0x30)
         self._lcd(0x30)
-        self._lcd(0x38)
-        self._lcd(0x0E)
+        self._lcd(0x38) # 0x30 = 8bit mode; 0x08 = screen physical properties
+        self.lcd_state()
         self.clear_screen()
-        self._lcd(0x06)
+        self.scroll(self.SCROLL_RIGHT)
 
         # Interupt
         GPIO.setmode(GPIO.BCM)
@@ -224,29 +234,52 @@ class Display(I2CDevice):
         else:
             self._write_state(state | index)
 
-    def cursor_home(self):
-        self._lcd(0x02)
+    def home(self, line = 0):
+        if line == 0:
+            self._lcd(0x02)
+        elif line == 1:
+            self._lcd(0x40 | 0x80)
+
+    def position(self, line, pos):
+        line = 1 if line > 1 else line
+        pos = 39 if pos > 39 else pos 
+        pos += line * 0x40
+        self._lcd(pos | 0x80)
+
+    def lcd_state(self, status = DISPLAY | CURSOR | BLINK):
+        self._lcd(status & (self.CURSOR | self.BLINK | self.DISPLAY) | self.CFG_DISPLAY)
 
     def clear_screen(self):
         self._lcd(0x01)
 
-    def display_shift(self):
+    def scroll(self, direction):
+        self._lcd(0x04 | (direction & (self.SCROLL_DISPLAY | self.SCROLL_RIGHT)))
+
+    def shift_screen(self):
         self._lcd(0x1F)
 
+    def unshift_screen(self):
+        self._lcd(0x18)
+
     def lcd_status(self):
-        return self.read_word(0x01) & 0x1C
+        return self.read_byte(0x01) & 0x1C
 
     def btn_status(self):
-        return self.read_word(0x01) & self.BUTTONS
+        return self.read_byte(0x01) & self.BUTTONS
 
     def print_str(self, msg):
+        # TODO ensure that msg has less than 40 char.
         for c in msg:
             self.print_char(ord(c))
+
+    def print_at(self, line, pos, char):
+        self.position(line, pos)
+        self.print_char(ord(char[0]))
 
     def print_char(self, char):
         state = self._read_state()
         self._write_state(state | 0x04)
-        self.write_word(0x02, _reverse_bits_of_byte(char))
+        self.write_byte(0x02, _reverse_bits_of_byte(char))
         self._lcd_enable()
         self._write_state(state &~ 0x04)
 
@@ -264,7 +297,7 @@ class Display(I2CDevice):
                 self.btn_handler.on_right(self)
 
     def _lcd(self, instr):
-        self.write_word(0x02, _reverse_bits_of_byte(instr))
+        self.write_byte(0x02, _reverse_bits_of_byte(instr))
         sleep(self.DELAY)
         self._lcd_enable()
         sleep(self.DELAY)
@@ -274,13 +307,13 @@ class Display(I2CDevice):
         sleep(self.SHORT_DELAY)
         self._write_state(state & ~0x01)
     def _reset(self):
-        self.write_word(0x03, 0x03)
+        self.write_byte(0x03, 0x03)
     def _read_state(self):
-        return self.read_word(0x03)
+        return self.read_byte(0x03)
     def _write_state(self, value):
-        self.write_word(0x03, value)
+        self.write_byte(0x03, value)
     def _config_rw(self):
-        self.write_word(0x03, 0x02)
+        self.write_byte(0x03, 0x02)
 
 STACK_DEVICES = [PowerSwitch, Temperature, PowerMeter]
 
