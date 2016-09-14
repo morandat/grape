@@ -4,7 +4,7 @@ from time import sleep
 import logging
 
 
-BUSES = [0, 1] 
+BUSES = [0, 1]
 INTERUPT_PIN = 15
 
 _log = logging.getLogger(__name__)
@@ -34,7 +34,6 @@ class ButtonPrinter(ButtonHandler):
         print("right")
 
 class Stack(object):
-
     def __init__(self, bus, prefix):
         self._prefix = prefix
         self._bus = bus
@@ -88,7 +87,7 @@ class I2CDevice(object):
             return True
         except:
             return False
-        
+
 class PowerSwitch(I2CDevice):
     CLASS_ADDRESS = 0x38
     L2P = [1, 6, 3, 2, 5, 4]
@@ -121,21 +120,23 @@ class PowerSwitch(I2CDevice):
         for idx in range(len(self.L2P)):
             self._pin |= 1 << self.L2P[idx]
         self.write()
-        
+
 
 class Temperature(I2CDevice):
-    CLASS_ADDRESS = 0x40
+    CLASS_ADDRESS = 0x48
     THM_REG = 0x00
 
     def get(self):
         data = self.read_word(self.THM_REG)
-        if data & 0x8000:
-            return - (~((data >> 8) & 0x7F)) - (0.5 if data & 0x80 else 0)
+        print("{0:b}".format(data >> 8 | ((data & 0xff) << 8)))
+        print(data & 0x0080)
+        if data & 0x0080:
+            return - (~(data & 0x7F)) - (0.5 if data & 0x8000 else 0.0)
         else:
-            return (data >> 8) + (0.5 if data & 0x80 else 0)
+            return (data & 0xff) + (0.5 if 0x8000 else 0.0)
 
 class PowerMeter(I2CDevice):
-    CLASS_ADDRESS = 0x48
+    CLASS_ADDRESS = 0x40
 
     CALIBRATION_VALUE = 0x0666
     CURRENT_DIVIDER = (1000 * 50)
@@ -242,7 +243,7 @@ class Display(I2CDevice):
 
     def position(self, line, pos):
         line = 1 if line > 1 else line
-        pos = 39 if pos > 39 else pos 
+        pos = 39 if pos > 39 else pos
         pos += line * 0x40
         self._lcd(pos | 0x80)
 
@@ -288,7 +289,7 @@ class Display(I2CDevice):
         state = self._status = self.btn_status()
         if self.btn_handler is None: return
         if state & self.BTN_PRESS: self.btn_handler.on_pressed(self)
-        state = (state & self.BTN_LEFT_RIGHT) >> 6 # FIXME function or constant for this 
+        state = (state & self.BTN_LEFT_RIGHT) >> 6 # FIXME function or constant for this
         p_state = (p_state & self.BTN_LEFT_RIGHT) >> 6
         if state != p_state:
             if self._LEFT_SUCCESSOR[p_state] == state:
@@ -338,7 +339,7 @@ for bid, bus in buses.items():
         try:
             _log.debug("Probing stack %d on bus %d.", sid, bid)
             bus.read_byte(PowerSwitch.make_address(sid))
-            stacks[sid] = Stack(bus, sid)
+            stacks[8*bid + sid] = Stack(bus, sid)
             _log.info("stack %d on bus %d detected.", sid, bid)
         except Exception as e:
             _log.debug("stack %d on bus %d not found.", sid, bid)
