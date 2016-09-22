@@ -15,7 +15,6 @@ if stacks.has_key(STACK):
     stacks[STACK][PowerSwitch][0] = True
     print(stacks[STACK][PowerSwitch].status())
     print(stacks[STACK][Temperature].get())
-
     print(stacks[STACK][PowerMeter].current())
     print(stacks[STACK][PowerMeter].voltage())
     print(stacks[STACK][PowerMeter].power())
