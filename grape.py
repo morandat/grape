@@ -5,7 +5,13 @@ import logging
 
 
 BUSES = [0, 1]
-INTERUPT_PIN = 15
+DSP_INTERUPT_PIN = 17
+TMP_INTERUPT_PIN = 27
+
+# Currently Unused, this should be the base address for the PiDevice Class
+# E.g. second pi of stack 013 in octal (bus 1, stack 3):
+# 3 + RASP_CLASS_ADDRESSES[1] == 0x5b 
+RASP_CLASS_ADDRESSES = [ 0x50, 0x58, 0x60, 0x68, 0x70, 0x78 ]
 
 _log = logging.getLogger(__name__)
 
@@ -16,6 +22,9 @@ display = None
 
 def _reverse_bits_of_byte(b):
     return (((b * 0x0802L & 0x22110L) |(b * 0x8020L & 0x88440L)) * 0x10101L >> 16) & 0xff
+
+def big2little_endian(w):
+    return ((w & 0xff) << 8) | ((w & 0xff00) >> 8)
 
 class ButtonHandler(object):
     def on_pressed(self, display):
@@ -51,7 +60,7 @@ class Stack(object):
 
 class I2CDevice(object):
     CLASS_ADDRESS = 0x00 # Should be defined in each subclass
-    PROBE_QUICK = False
+    PROBE_WRITE_QUICK = False
 
     def __init__(self, bus, prefix):
         self._bus = bus
@@ -67,6 +76,7 @@ class I2CDevice(object):
         return self._bus.read_byte_data(self._address, register)
     def write_byte(self, register, value):
         self._bus.write_byte_data(self._address, register, value)
+    # TODO use big2little_endian here after, but check usage
     def read_word(self, register):
         return self._bus.read_word_data(self._address, register)
     def write_word(self, register, value):
@@ -80,7 +90,7 @@ class I2CDevice(object):
     def probe(cls, bus, prefix):
         address = cls.make_address(prefix)
         try:
-            if cls.PROBE_QUICK:
+            if cls.PROBE_WRITE_QUICK:
                 bus.write_quick(address)
             else:
                 bus.read_byte(address)
@@ -91,9 +101,13 @@ class I2CDevice(object):
 class PowerSwitch(I2CDevice):
     CLASS_ADDRESS = 0x38
     L2P = [1, 6, 3, 2, 5, 4]
+    PROBE_WRITE_QUICK = False
+    # FIXME autodetect should use write quick ? but with a value of 0xff
+    # Maybe this is not the best way to init this component
 
     def setup(self):
-        self.update()
+        self._pin = 0xff # FIXME this is an ugly hack to fix startup
+        self.write_byte(0x00, self._pin)
     def update(self):
         self._pin = self.read_byte()
     def write(self):
@@ -138,7 +152,7 @@ class Temperature(I2CDevice):
 class PowerMeter(I2CDevice):
     CLASS_ADDRESS = 0x40
 
-    CALIBRATION_VALUE = 0x0666
+    CALIBRATION_VALUE = 0x0819 # This may be the right value, but has never been checked
     CURRENT_DIVIDER = (1000 * 50)
 
     CONF_REG = 0x00
@@ -156,9 +170,9 @@ class PowerMeter(I2CDevice):
     BUS_VOLTAGE_RANGE_32V = 0x2000
 
     def setup(self):
-        print("{0:x}".format(self.config_value()))
-        self.write_word(self.CONF_REG, self.config_value())
-        self.write_word(self.CALIB_REG, self.CALIBRATION_VALUE)
+        # print("{0:x}".format(self.config_value()))
+        self.write_word(self.CONF_REG, big2little_endian(self.config_value()))
+        self.write_word(self.CALIB_REG, big2little_endian(self.CALIBRATION_VALUE))
 
     def config_value(self):
         return self.SHUNT_BUS_CONTINUOUS \
@@ -168,18 +182,21 @@ class PowerMeter(I2CDevice):
                 | self.BUS_VOLTAGE_RANGE_32V
 
     def current(self): # in mA
-        return self.read_word(self.CURRENT_REG) / self.CURRENT_DIVIDER
+        return big2little_endian(self.read_word(self.CURRENT_REG))
+        #return self.read_word(self.CURRENT_REG) # / self.CURRENT_DIVIDER
     def voltage(self): # in mV
-        return (self.read_word(self.VOLTAGE_REG) >> 3) * 4
+        return (big2little_endian(self.read_word(self.VOLTAGE_REG)) >> 3) * 4
+        #return (self.read_word(self.VOLTAGE_REG) >> 3) * 4
     def power(self): # in mW
-        return self.read_word(self.POWER_REG) / 2
+        return big2little_endian(self.read_word(self.POWER_REG))
+        #return self.read_word(self.POWER_REG) / 2
     def shunt(self):
-        return self.read_word(self.SHUNT_REG)
+        return (big2little_endian(self.read_word(self.SHUNT_REG)) >> 3) * 4
 
 class Display(I2CDevice):
     CLASS_ADDRESS = 0x20
     DEFAULT_PREFIX = 0x00
-    PROBE_QUICK = True
+    PROBE_WRITE_QUICK = True
 
     RED = 0x08
     GREEN = 0x10
@@ -220,13 +237,13 @@ class Display(I2CDevice):
         self.clear_screen()
         self.scroll(self.SCROLL_RIGHT)
 
-        # Interupt
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(INTERUPT_PIN, GPIO.IN)
-        #GPIO.add_event_detect(INTERUPT_PIN, GPIO.RISING, callback = self.interrupt)
-
         self.btn_handler = ButtonHandler()
         self._status = self.btn_status()
+
+        # Interupt
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(DSP_INTERUPT_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.add_event_detect(DSP_INTERUPT_PIN, GPIO.RISING, callback = self.interrupt)
 
     def led(self, index, state):
         state = self._read_state()
@@ -287,6 +304,7 @@ class Display(I2CDevice):
     def interrupt(self, channel):
         p_state = self._status
         state = self._status = self.btn_status()
+        #print("interrupt {0}".format(p_state != state))
         if self.btn_handler is None: return
         if state & self.BTN_PRESS: self.btn_handler.on_pressed(self)
         state = (state & self.BTN_LEFT_RIGHT) >> 6 # FIXME function or constant for this
